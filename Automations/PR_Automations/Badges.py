@@ -1,32 +1,3 @@
-"""Generate a print-ready badge deck from Airtable assignments.
-
-Each delegate gets one badge front (country + committee). Badges are grouped by
-school so a school's badges stay together, and the schedule slide from the
-template is copied onto the back of every printed sheet.
-
-Setup (once, in Automations/Infrastructure/Airtable/.env):
-    API_KEY                        Airtable personal access token
-    AirtableBaseID                 base holding the delegate table
-    AirtableTableName              table with one row per delegate
-
-Dependencies (once, from the repository root):
-    python3 -m pip install --target .deps -r Automations/PR_Automations/requirements.txt
-
-    Installed into .deps rather than a venv because `python -m venv` refuses to
-    build an environment whose path contains ':' (this checkout's folder name
-    does), and PYTHONPATH cannot express such a path either - it is the same
-    separator. The bootstrap below adds .deps to sys.path in-process instead.
-
-The template deck is expected to hold two slides: slide 1 is a badge front with
-slots {Country_1}/{Committee_1} ... {Country_8}/{Committee_8}, and slide 2 is
-the schedule that gets copied onto the back of every sheet. Marker text must
-match exactly, because replacements are case-sensitive.
-
-Run from the repository root:
-    python -m Automations.PR_Automations.Badges --dry-run   # report only
-    python -m Automations.PR_Automations.Badges             # build the deck
-"""
-
 import os
 import sys
 from dataclasses import dataclass
