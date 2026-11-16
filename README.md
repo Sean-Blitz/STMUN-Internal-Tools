@@ -17,7 +17,7 @@ STMUN-Backend-Code
    |-- InvoiceFinalData.py
    |-- .env
 |-- PR Automations
-   |-- CopyBadges.py
+   |-- Badges.py
    |-- CopyPlacards.py
 |-- SG Automations
    |-- Entrypoint.py

@@ -2,7 +2,7 @@ import re
 import string
 from googleapiclient.discovery import build
 from .GoogleAPIsManager import GoogleAPIs
-from Infrastructure.utilities import retry_on_http_error
+from ..utilities import retry_on_http_error
 from ..Display.DisplayManager import DisplayClass
 
 Display = DisplayClass()

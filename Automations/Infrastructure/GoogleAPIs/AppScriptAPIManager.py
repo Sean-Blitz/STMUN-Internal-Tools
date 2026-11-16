@@ -1,6 +1,6 @@
 from .GoogleAPIsManager import GoogleAPIs
 from googleapiclient.discovery import build
-from Infrastructure.utilities import retry_on_http_error
+from ..utilities import retry_on_http_error
 from ..Display.DisplayManager import DisplayClass
 import time
 
