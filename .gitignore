@@ -14,3 +14,4 @@ Automations/Infrastructure/Airtable/.env
 Automations/Finances_Automations/.env
 Automations/SG_Automations/Individual_Sheets/.env
 *.log
+Automations/Individual_Sheets/.env

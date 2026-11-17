@@ -143,6 +143,7 @@ def assign_new_schools():
             Display.display("Email draft skipped. Please make it manually.")
             sys.exit()
         new_email_doc_ID = RosterConnector.draft_email_for_school_and_share_roster(selectedSchool, SchoolInfo.advisor_email, SchoolInfo.head_del_email, new_roster_ID, this_year_folder_ID)
+        # This may return a non-blocking error if the email for sharing does not allow for the incoming share of the document (Domain permissions).
         Display.display(f"Email draft created: https://docs.google.com/document/d/{new_email_doc_ID}/edit")
         unassignedSchools.remove(selectedSchool)
         school_row = Todo.flag_assignments_made_and_place_roster_link(selectedSchool, roster_link)
