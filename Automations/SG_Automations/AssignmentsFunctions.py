@@ -187,6 +187,26 @@ def update_delegates(new_country: str, old_country: str | None, delegate_key: in
         else:
             Display.display(f"\033[K Assigned {new_country} to twin delegate {number}")
 
+def percentages_match(ConferenceInfo: ConferenceInformation, sheet_percentages: list[float]) -> bool:
+    """
+    Compares expected filled percentages with the values read back from the Overview sheet.
+
+    The sheet rounds percentages for display (e.g. 47.368...% is stored as "47.37%"), so exact
+    float equality always fails. Compare the implied number of filled delegate slots instead,
+    which is stable against that display rounding.
+    """
+    if len(sheet_percentages) != len(ConferenceInfo.committee_names):
+        return False
+
+    for name, sheet_percentage in zip(ConferenceInfo.committee_names, sheet_percentages):
+        spots = ConferenceInfo.committee_spots[name]
+        expected_filled = round(ConferenceInfo.committee_percentage_filled[name] * spots / 100)
+        actual_filled = round(sheet_percentage * spots / 100)
+        if expected_filled != actual_filled:
+            return False
+
+    return True
+
 def print_data_to_terminal(RegionBloc, CountryPrefs, SecurityCouncil, numdels, newschool=True):
     Display.display("Region block most preferred:", "\033[1m" + RegionBloc + "\033[0m") #Display.display country preferences in bold for visibility.
     for i, country in enumerate(CountryPrefs):
@@ -369,8 +389,9 @@ def add_assignments(Delegates: SchoolDelegates, ConferenceInfo: ConferenceInform
 def sync_with_secondary_storage(SchoolInfo: SchoolInformation, Delegates: SchoolDelegates):
     """
     Syncs finalassignments with Airtable using requests. 
-    Parses delegate keys, searches for record IDs, updates 'Committee Assigned' via 
-    select_dropdown_option_raw, and updates 'Country' text field via REST API.
+    Parses delegate keys, searches for record IDs, links 'Committee Assigned - dropdown'
+    (the writable linked-record field; 'Committee Assigned' itself is a read-only formula),
+    and updates the 'Country' text field via REST API.
     """
     base_id = os.getenv("AirtableBaseID")
     table_name = os.getenv("AirtableTableName")
@@ -392,13 +413,14 @@ def sync_with_secondary_storage(SchoolInfo: SchoolInformation, Delegates: School
             Display.display(f"Warning: No matching record found for '{school_name}' (Delegate #{delegate_key})")
             continue
 
-        # 1. Update 'Committee Assigned' using your dropdown helper method
+        # 1. Link the committee record via the writable linked-record field.
+        # 'Committee Assigned' is a formula field and cannot be written to.
         if committee:
             SecondaryStorage.link_record_by_name(
                 base_id=base_id,
                 main_table_name=table_name,
                 record_id=record_id,
-                field_name="Committee Assigned",
+                field_name="Committee Assigned - dropdown",
                 target_table_name = "Committees",
                 target_name_field = "Committee Name",
                 search_string = committee

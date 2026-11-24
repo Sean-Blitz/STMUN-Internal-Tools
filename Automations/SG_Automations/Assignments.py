@@ -92,7 +92,7 @@ def assign_new_schools():
         time.sleep(5); Display.display("Checking sheet for changes...") #pause for sheet to register changes.
         percentagesChecking = SheetsAPI.read_percentages_from_overview(ConferenceInfo)
         hashes = ServerRequests.add_new_school_or_delegates_to_existing_school_and_request_hashes(Delegates)
-        if percentagesChecking == list(ConferenceInfo.committee_percentage_filled.values()) and hashes != None:
+        if AssignmentsFunctions.percentages_match(ConferenceInfo, percentagesChecking) and hashes != None:
             Display.display("Percentages are correct.")
         else:
             Display.display("Percentage error. Please check the sheet!")
@@ -186,7 +186,7 @@ def add_delegates():
     
     time.sleep(5); Display.display("Checking sheet for changes...") #pause for cloud storage system (sheets) to register changes.
     percentagesChecking = SheetsAPI.read_percentages_from_overview(ConferenceInfo)
-    if percentagesChecking == list(ConferenceInfo.committee_percentage_filled.values()):
+    if AssignmentsFunctions.percentages_match(ConferenceInfo, percentagesChecking):
         Display.display("Percentages are correct. Moving on to next school.")
         hashes = ServerRequests.add_new_school_or_delegates_to_existing_school_and_request_hashes(Delegates)
         Display.display(hashes)
