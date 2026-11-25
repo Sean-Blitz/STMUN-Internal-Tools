@@ -5,9 +5,7 @@ import os
 from dotenv import load_dotenv
 from urllib.parse import quote
 from ..Display.DisplayManager import DisplayClass
-# Load the .env sitting next to this file, not one in whatever directory the
-# entry point happened to chdir into.
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+load_dotenv()
 Display = DisplayClass()
 
 finance_table_id = os.getenv("FINANCE_TABLE_ID")  # Ensure this is set in your .env file
@@ -142,11 +140,9 @@ class AirtableAPI:
 
     def get_all_records(self, base_id: str, table_name: str, fields: list = None):
         """
-        Fetches every record from an Airtable table, following pagination.
+        Fetches every record from an Airtable table
 
-        Airtable returns at most 100 records per request and hands back an
-        `offset` token for the next page, so a single GET silently truncates
-        large tables. This walks all pages.
+        Airtable returns at most 100 records => we can bypass that 
 
         Args:
             base_id (str): Base ID (e.g., 'appEySB2x9jqHy16Q')
@@ -154,7 +150,7 @@ class AirtableAPI:
             fields (list, optional): Only fetch these field names
 
         Returns:
-            list: Every record dict, in the table's current order
+            list: Every record, in the current order given by airable
         """
         url = f"https://api.airtable.com/v0/{base_id}/{quote(str(table_name), safe='')}"
         headers = {"Authorization": f"Bearer {self.api_token}"}
