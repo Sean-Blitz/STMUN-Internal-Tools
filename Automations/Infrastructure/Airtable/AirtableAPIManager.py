@@ -138,6 +138,44 @@ class AirtableAPI:
 
         return records[0]["id"]
 
+    def get_all_records(self, base_id: str, table_name: str, fields: list = None):
+        """
+        Fetches every record from an Airtable table
+
+        Airtable returns at most 100 records => we can bypass that 
+
+        Args:
+            base_id (str): Base ID (e.g., 'appEySB2x9jqHy16Q')
+            table_name (str): Table name or table ID (e.g., 'Delegates')
+            fields (list, optional): Only fetch these field names
+
+        Returns:
+            list: Every record, in the current order given by airable
+        """
+        url = f"https://api.airtable.com/v0/{base_id}/{quote(str(table_name), safe='')}"
+        headers = {"Authorization": f"Bearer {self.api_token}"}
+
+        params = {"pageSize": 100}
+        if fields:
+            params["fields[]"] = list(fields)
+
+        records = []
+        while True:
+            response = requests.get(url, headers=headers, params=params)
+            if response.status_code != 200:
+                raise RuntimeError(
+                    f"Airtable GET failed ({response.status_code}) for table "
+                    f"'{table_name}': {response.text}"
+                )
+
+            payload = response.json()
+            records.extend(payload.get("records", []))
+
+            offset = payload.get("offset")
+            if not offset:
+                return records
+            params["offset"] = offset
+
     def view_latest_record(self, rID):
         url = f"https://api.airtable.com/v0/appEySB2x9jqHy16Q/{form_response_table_id}/{rID}" #change this next year.
         auth_token = self.api_token

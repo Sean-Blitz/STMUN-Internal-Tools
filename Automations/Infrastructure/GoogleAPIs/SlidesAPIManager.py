@@ -1,6 +1,6 @@
 from .GoogleAPIsManager import GoogleAPIs
 from googleapiclient.discovery import build
-from Infrastructure.utilities import retry_on_http_error
+from ..utilities import retry_on_http_error
 from ..Display.DisplayManager import DisplayClass
 
 Display = DisplayClass()
@@ -43,12 +43,43 @@ class SlideAPI(GoogleAPIs):
         return new_slide_id
 
     @retry_on_http_error()
-    def replace_placeholders(self, service, presentation_id, value_map):
+    def duplicate_slide_many(self, presentation_id, slide_object_id, count):
+        """
+        Duplicates one slide `count` times in a single batchUpdate.
+
+        One call per duplicate hits the Slides write quota almost immediately on
+        a full conference deck, so the copies are requested together.
+
+        Returns:
+            list: New slide object IDs in creation order (replies come back in
+                the same order as the requests)
+        """
+        if count <= 0:
+            return []
+
+        body = {
+            "requests": [
+                {"duplicateObject": {"objectId": slide_object_id}}
+                for _ in range(count)
+            ]
+        }
+
+        response = self.presentations().batchUpdate(
+            presentationId=presentation_id,
+            body=body
+        ).execute()
+
+        return [
+            reply["duplicateObject"]["objectId"]
+            for reply in response.get("replies", [])
+        ]
+
+    @retry_on_http_error()
+    def replace_placeholders(self, presentation_id, value_map):
         """
         Replace placeholders in a Google Slides presentation.
 
         Args:
-            service: Authorized Google Slides API service instance
             presentation_id: The ID of the presentation
             value_map: Dict of {placeholder: replacement_value}
         """
@@ -132,59 +163,35 @@ class SlideAPI(GoogleAPIs):
         return first_slide["objectId"]
 
     @retry_on_http_error()
-    def create_slide_copies(self, presentation_id, template_slide_id, number_of_copies):
-        """
-        Duplicates a template slide N times.
-
-        Returns:
-            (count_created, [list_of_slide_ids])
-        """
-
-        created_slide_ids = []
-
-        for i in range(number_of_copies):
-            new_slide_id = self.duplicate_slide(
-                presentation_id,
-                template_slide_id
-            )
-            created_slide_ids.append(new_slide_id)
-
-        return len(created_slide_ids), created_slide_ids
-
-    @retry_on_http_error()
     def move_slides_to_indexes(self, presentation_id, slide_ids, target_indexes):
+        """
+        Moves each slide to its target index in a single batchUpdate.
+
+        Requests inside one batchUpdate are applied in order, so ascending
+        targets behave exactly like sequential calls while costing one request
+        instead of one per slide.
+        """
         if len(slide_ids) != len(target_indexes):
             raise ValueError("slide_ids and target_indexes must match length.")
+        if not slide_ids:
+            return
 
-        # Sort by target index ascending
-        moves = sorted(zip(slide_ids, target_indexes), key=lambda x: x[1])
+        moves = sorted(zip(slide_ids, target_indexes), key=lambda move: move[1])
 
-        for i, (slide_id, target_index) in enumerate(moves):
-            # Get current slide count before move
-            presentation = self.presentations().get(presentationId=presentation_id).execute()
-            current_slide_count = len(presentation.get("slides", []))
-
-            # Cap target_index at the end
-            if target_index > current_slide_count:
-                target_index = current_slide_count
-
-            request = {
-                "requests": [
-                    {
-                        "updateSlidesPosition": {
-                            "slideObjectIds": [slide_id],
-                            "insertionIndex": target_index
-                        }
-                    }
-                ]
+        requests = [
+            {
+                "updateSlidesPosition": {
+                    "slideObjectIds": [slide_id],
+                    "insertionIndex": target_index
+                }
             }
+            for slide_id, target_index in moves
+        ]
 
-            self.presentations().batchUpdate(
-                presentationId=presentation_id,
-                body=request
-            ).execute()
-
-        Display.display("Finished moving slides.")
+        self.presentations().batchUpdate(
+            presentationId=presentation_id,
+            body={"requests": requests}
+        ).execute()
 
     @retry_on_http_error()
     def get_slide_id_by_index(self, presentation_id, index):
@@ -285,42 +292,6 @@ class SlideAPI(GoogleAPIs):
         return len(slides)
 
     @retry_on_http_error()
-    def reverse_all_slides(self, presentation_id):
-        """
-        Reverses the order of all slides in a presentation.
-        """
-
-        # Get slide IDs in current order
-        presentation = self.presentations().get(
-            presentationId=presentation_id,
-            fields="slides(objectId)"
-        ).execute()
-
-        slides = presentation.get("slides", [])
-        slide_ids = [slide["objectId"] for slide in slides]
-
-        if len(slide_ids) <= 1:
-            return
-
-        reversed_ids = list(reversed(slide_ids))
-
-        requests = []
-
-        # Move each slide to its new position
-        for new_index, slide_id in enumerate(reversed_ids):
-            requests.append({
-                "updateSlidesPosition": {
-                    "slideObjectIds": [slide_id],
-                    "insertionIndex": new_index
-                }
-            })
-
-        self.presentations().batchUpdate(
-            presentationId=presentation_id,
-            body={"requests": requests}
-        ).execute()
-
-    @retry_on_http_error()
     def delete_slide(self, presentation_id, slide_id):
         """
         Deletes a slide from a presentation using its object ID.
@@ -344,4 +315,28 @@ class SlideAPI(GoogleAPIs):
         self.presentations().batchUpdate(
             presentationId=presentation_id,
             body=request
+        ).execute()
+
+    @retry_on_http_error()
+    def delete_slides(self, presentation_id, slide_ids):
+        """
+        Deletes several slides in a single batchUpdate.
+
+        Args:
+            self: Authenticated Google Slides API service
+            presentation_id (str): ID of the presentation
+            slide_ids (list): Object IDs of the slides to remove
+        """
+        slide_ids = [slide_id for slide_id in slide_ids if slide_id]
+        if not slide_ids:
+            return
+
+        self.presentations().batchUpdate(
+            presentationId=presentation_id,
+            body={
+                "requests": [
+                    {"deleteObject": {"objectId": slide_id}}
+                    for slide_id in slide_ids
+                ]
+            }
         ).execute()

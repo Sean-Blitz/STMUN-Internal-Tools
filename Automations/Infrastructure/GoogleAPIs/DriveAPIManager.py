@@ -1,7 +1,7 @@
 from googleapiclient.discovery import build
 import re
-from Infrastructure.GoogleAPIs.GoogleAPIsManager import GoogleAPIs
-from Infrastructure.utilities import retry_on_http_error
+from .GoogleAPIsManager import GoogleAPIs
+from ..utilities import retry_on_http_error
 from ..Display.DisplayManager import DisplayClass
 
 Display = DisplayClass()

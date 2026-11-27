@@ -1,7 +1,7 @@
 import base64
-from Infrastructure.GoogleAPIs.GoogleAPIsManager import GoogleAPIs
+from .GoogleAPIsManager import GoogleAPIs
 from googleapiclient.discovery import build
-from Infrastructure.utilities import retry_on_http_error
+from ..utilities import retry_on_http_error
 
 class GmailAPI(GoogleAPIs):
     def __init__(self, SCOPES = None, CREDENTIALS_FILE = None, TOKEN_FILE = None):

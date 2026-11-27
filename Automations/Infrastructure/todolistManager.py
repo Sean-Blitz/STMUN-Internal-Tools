@@ -1,8 +1,6 @@
-from Infrastructure.GoogleAPIs.DriveAPIManager import DriveAPI
-from Infrastructure.GoogleAPIs.SheetsAPIManager import SheetAPI
+from .GoogleAPIs.DriveAPIManager import DriveAPI
+from .GoogleAPIs.SheetsAPIManager import SheetAPI
 from dotenv import load_dotenv; load_dotenv()
-
-SheetsAPI = SheetAPI()
 
 todolist_sheetname = "To-Do List"
 assignments_made = "Assignments"
@@ -22,35 +20,35 @@ class TodoList():
 
     def __get_header_columns_list(self):
         """Pre-condition: header row must have no blanks before the last header."""
-        return SheetsAPI.read_headers_until_blank(self.todolist_sheet_id, todolist_sheetname)
+        return self.sheet.read_headers_until_blank(self.todolist_sheet_id, todolist_sheetname)
 
     def __get_header_column(self, header_name):
         """Pre-condition: header row must have no blanks before the last header."""
         index = self.headers.index(header_name)
-        return SheetsAPI.sheets_alphabet(index)
+        return self.sheet.sheets_alphabet(index)
 
     def __place_value_in_cell(self, row, column, value):
         """Places a value in a specific cell in the to-do list."""
         cell_address = f"{todolist_sheetname}!{column}{row}"
         cell_value_map = {cell_address: value}
-        SheetsAPI.write_values_to_sheet_from_dict(spreadsheet_id=self.todolist_sheet_id, cell_value_map=cell_value_map)
+        self.sheet.write_values_to_sheet_from_dict(spreadsheet_id=self.todolist_sheet_id, cell_value_map=cell_value_map)
 
     def __mark_or_unmark_to_do(self, school_row, col_number, todo=True):
         """Marks a school as to do in the to-do list."""
         # Find column letter for to_do header
         cell = f"{col_number}{school_row}"
-        row, col = SheetsAPI.a1_to_rowcol(cell) # returns 0 indexed int conversions
+        row, col = self.sheet.a1_to_rowcol(cell) # returns 0 indexed int conversions
         if todo == True:
-            SheetsAPI.set_cell_background_color(self.todolist_sheet_id, todolist_sheetname, row, col, 1.0, 1.0, 0.0)  # Yellow color
+            self.sheet.set_cell_background_color(self.todolist_sheet_id, todolist_sheetname, row, col, 1.0, 1.0, 0.0)  # Yellow color
         elif todo == False:
-            SheetsAPI.set_cell_background_color(self.todolist_sheet_id, todolist_sheetname, row, col, 1.0, 1.0, 1.0)  # White color
+            self.sheet.set_cell_background_color(self.todolist_sheet_id, todolist_sheetname, row, col, 1.0, 1.0, 1.0)  # White color
         else:
             raise ValueError("Invalid value for variable 'todo'. Must be True or False.")
 
     def flag_assignments_made_and_place_roster_link(self, school_name, link):
         """Flags that assignments have been made for a school in the sheet to-do list."""
         # Find column letters for both headers
-        school_row = SheetsAPI.find_row_by_string(self.todolist_sheet_id, todolist_sheetname, "A", school_name)
+        school_row = self.sheet.find_row_by_string(self.todolist_sheet_id, todolist_sheetname, "A", school_name)
         if school_row is None:
             raise ValueError(f"School '{school_name}' not found in the to-do list column.")
         assignments_col = self.__get_header_column(assignments_made)
@@ -65,7 +63,7 @@ class TodoList():
         cell_value_map = {assignments_cell: True,roster_link_cell: link}
 
         # Write both updates to the spreadsheet in a single API call
-        SheetsAPI.write_values_to_sheet_from_dict(spreadsheet_id=self.todolist_sheet_id,cell_value_map=cell_value_map)
+        self.sheet.write_values_to_sheet_from_dict(spreadsheet_id=self.todolist_sheet_id,cell_value_map=cell_value_map)
         self.__mark_or_unmark_to_do(school_row, assignments_col, todo=False)  # Unmark the to-do for assignments made
         self.__mark_or_unmark_to_do(school_row, roster_sent_col, todo=True) # Mark the to-do for roster sent
         return school_row
@@ -82,7 +80,7 @@ class TodoList():
 
     def place_invoice_link_in_todolist(self, school_name, invoice_number, link):
         """Places the invoice link in the to-do list for a specific school. Final Invoice is invoice_number 4."""
-        school_row = SheetsAPI.find_row_by_string(self.todolist_sheet_id, todolist_sheetname, "A", school_name)
+        school_row = self.sheet.find_row_by_string(self.todolist_sheet_id, todolist_sheetname, "A", school_name)
         if school_row is None:
             raise ValueError(f"School '{school_name}' not found in the to-do list column.")
         # Find column letter for roster_link header, based on invoice number
@@ -93,7 +91,7 @@ class TodoList():
 
     def place_countries_assigned_in_todolist(self, school_name, countries: set):
         """Places the countries assigned in the to-do list for a specific school."""
-        school_row = SheetsAPI.find_row_by_string(self.todolist_sheet_id, todolist_sheetname, "A", school_name)
+        school_row = self.sheet.find_row_by_string(self.todolist_sheet_id, todolist_sheetname, "A", school_name)
         # Find column letter for roster_link header
         country_col = self.__get_header_column(countries_assigned_col_name)
 
