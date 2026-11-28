@@ -2,6 +2,7 @@ from .GoogleAPIsManager import GoogleAPIs
 from googleapiclient.discovery import build
 from ..utilities import retry_on_http_error
 from ..Display.DisplayManager import DisplayClass
+from typing import Any, Dict
 
 Display = DisplayClass()
 
@@ -259,7 +260,7 @@ class SlideAPI(GoogleAPIs):
                         "matchCase": True
                     },
                     "replaceText": new_value,
-                    "pageObjectIds": [slide_id]  # 🔥 restrict to this slide only
+                    "pageObjectIds": [slide_id]  # restrict to this slide only
                 }
             })
 
@@ -269,6 +270,57 @@ class SlideAPI(GoogleAPIs):
             presentationId=presentation_id,
             body=body
         ).execute()
+
+    def batch_update_slides_text(
+        self,
+        presentation_id: str,
+        placeholder_text: str,
+        slide_updates: Dict[str, str],
+        match_case: bool = True
+        ) -> Dict[str, Any]:
+        """
+        Replaces a uniform placeholder string with unique text across multiple slides
+        in a single Google Slides API batchUpdate call.
+
+        Args:
+            slides_service: Authenticated Google Slides API service resource 
+                            (e.g., build('slides', 'v1', credentials=creds)).
+            presentation_id: The ID of the Google Slides presentation (from its URL).
+            placeholder_text: The identical placeholder string present on the slides 
+                            (e.g., "{{TITLE}}").
+            slide_updates: A dictionary mapping each slide's pageObjectId (str) to 
+                        the replacement text (str) for that specific slide.
+            match_case: Whether the placeholder search should be case-sensitive. 
+                        Defaults to True.
+
+        Returns:
+            The JSON response dictionary from the Google Slides API batchUpdate call.
+        """
+        requests = [
+            {
+                "replaceAllText": {
+                    "containsText": {
+                        "text": placeholder_text,
+                        "matchCase": match_case
+                    },
+                    "replaceText": new_text,
+                    "pageObjectIds": [slide_id]
+                }
+            }
+            for slide_id, new_text in slide_updates.items()
+        ]
+
+        if not requests:
+            return {"replies": []}
+
+        return (
+            self.presentations()
+            .batchUpdate(
+                presentationId=presentation_id,
+                body={"requests": requests}
+            )
+            .execute()
+        )
 
     @retry_on_http_error()
     def get_slide_count(self, presentation_id):

@@ -11,6 +11,75 @@ API_URL = "http://localhost:8000/hashes" #fill this in later!!! It's a base URL.
 # Basically, the FastAPI server will now need to process different requests based on the HTTP method, not just name of the endpoint.
 password = os.getenv("ServerPassword")
 
+"""Pull every award out of the SCVMUN API.
+
+Needs `requests`; everything else is the standard library.
+"""
+
+import json
+
+import requests
+
+BASE_URL = "https://scvmun.esuhsd.org" # deployment root, no trailing slash
+ADMIN_CODE = os.getenv("ADMIN_CODE")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+TURNSTILE_TOKEN = os.getenv("TURNSTILE_TOKEN")  # optional, for Cloudflare Turnstile; can be None
+TIMEOUT = 30 # In seconds
+
+def _error_text(response):
+    """The API's own {"message": ...} when it sent JSON, else a trimmed body."""
+    try:
+        body = json.loads(response.text)
+    except ValueError:
+        return (response.text or "<empty response>").strip()[:200]
+    if isinstance(body, dict) and "message" in body:
+        return body["message"]
+    return (response.text or "").strip()[:200]
+
+def login_as_admin(code=ADMIN_CODE, password=ADMIN_PASSWORD, turnstile_token=TURNSTILE_TOKEN, timeout=TIMEOUT, base_url=BASE_URL):
+    if code is None:
+        code = input("What is the admin hash (i.e. username)? This is set in the application's web interface.")
+    if password is None:
+        password = input("What is the admin password? This is set in the application's web interface.")
+    base = base_url.rstrip("/")
+    login = requests.post(
+        f"{base}/api/auth/login",
+        json={"hash": code, "password": password},
+        headers={"X-Turnstile-Token": turnstile_token} if turnstile_token else None,
+        timeout=timeout,
+    )
+    if login.status_code != 200:
+        raise RuntimeError(f"Login failed ({login.status_code}): {_error_text(login)}")
+
+    token = json.loads(login.text)["token"]
+    return token
+
+def get_awards(base_url=BASE_URL, timeout=TIMEOUT):
+    """Log in as the admin and return every stored award.
+
+    Returns a list of ``{"committee": str, "country": str, "award": str}``, already in the
+    API's order: committees alphabetically, countries alphabetically within a committee.
+
+    Raises RuntimeError with the server's message on a non-200, so a script can print it.
+    """
+    base = base_url.rstrip("/")
+
+    # 1. The admin routes need a bearer token, so log in first.
+    token = login_as_admin(ADMIN_CODE, ADMIN_PASSWORD, TURNSTILE_TOKEN, timeout, base_url)
+    # 2. Read the report.
+    response = requests.get(
+        f"{base}/api/admin/awards",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=timeout,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"GET /api/admin/awards failed ({response.status_code}): {_error_text(response)}"
+        )
+
+    # 3. Format: {committees: [{committee, awards: [{country, award}]}]}
+    return json.loads(response.text)["committees"]
+
 def add_new_school_or_delegates_to_existing_school_and_request_hashes(Delegates: SchoolDelegates) -> dict[str, str] | None:
     """
     Sends finalassignments data to the FastAPI endpoint and returns a dictionary
@@ -200,64 +269,8 @@ def request_hashes_for_school(school_name: str) -> dict[str, str]:
     except requests.exceptions.RequestException as e:
         Display.display(f"Error communicating with server: {e}")
         return {}
-
-def request_all_awards_data() -> dict[str, list[tuple[str, str]]]: # returns a dictionary where keys are (country, committee) tuples and values are award names.
-    """
-    Fetches all award data from FastAPI and formats it into a dictionary 
-    where keys are (country, committee) tuples and values are award names.
-
-    Matching FastAPI function should: 
-    1. accept bearer header token.
-    2. Be located on the /awards endpoint.
-    3. return a dictionary formatted as: {"CommitteeName": [(CountryName, AwardName), ...], ...}. Each individual dictionary key-value pair is a committee.
-    4. return appropriate HTTP status codes (200, 401, 403, 400, 422, 500, etc.)
-    5. return an optional message with things like "X committee(s) don't have awards yet".
-    """
-    API_URL = "http://127.0.0.1:8000/awards"
-    headers = {
-        "Authorization": f"Bearer {password}",
-        "Content-Type": "application/json"
-    }
     
-    try:
-        # GET request to fetch awards data
-        response = requests.get(
-            API_URL, 
-            headers=headers,
-            timeout=5
-        )
-        
-        # Status code checks
-        if response.status_code in (401, 403):
-            Display.display("Error: Wrong password or unauthorized access.")
-            return {}
-            
-        elif response.status_code >= 500:
-            Display.display("Error: Internal server error on the FastAPI server.")
-            return {}
 
-        response.raise_for_status()
-        
-        payload = response.json()
-        
-        # Print optional server message if included
-        if "message" in payload and payload["message"]:
-            Display.display(f"Server Message: {payload['message']}")
-            
-        # Parse list of items from 'data' and construct tuple-keyed dict
-        # Expecting 'data' to be a list of objects like:
-        # {"CommitteeName": [(CountryName, AwardName), ...], ...}
-        raw_awards_list = payload.get("data", [])
-
-        return raw_awards_list
-
-    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-        Display.display("Error: No server response. Check if FastAPI is running and accessible.")
-        return {}
-        
-    except requests.exceptions.RequestException as e:
-        Display.display(f"Error communicating with server: {e}")
-        return {}
 
 def regenerate_hashes_for_delegate(committee: str, country: str) -> str:
     """

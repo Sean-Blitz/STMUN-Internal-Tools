@@ -12,6 +12,7 @@ from SG_Automations import Assignments
 from SG_Automations import ServerRequests
 from SG_Automations.Assignments import Display
 from Infrastructure import TodoList
+from SG_Automations import Awards
 Todo = TodoList()
 
 def main():
@@ -58,10 +59,10 @@ def main():
         action = Display.select_option_with_pointer(options, "Great! Select the specific option.", "SCVMUN CLI - Awards Menu")
 
         if action == "Generate all submitted awards":
-            awards = ServerRequests.request_all_awards_data()
+            Awards.generate_all_awards_by_committee()
             # Function to request awards, run script with the function's output to generate awards in Google Slides. Separate ST Delegates!
         elif action == "View committee award submission status":
-            awards = ServerRequests.request_all_awards_data()
+            Awards.view_committee_award_submission_status()
             # Function to request awards, and display which committees have submitted awards and which have not.
 
     elif menu_action == "Exit":
