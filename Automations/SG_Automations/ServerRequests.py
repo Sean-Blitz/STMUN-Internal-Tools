@@ -1,5 +1,6 @@
 import os
 import requests
+from urllib.parse import quote
 from dotenv import load_dotenv
 
 from SG_Automations.DataManager import SchoolDelegates
@@ -7,8 +8,6 @@ from Infrastructure import DisplayClass
 load_dotenv()
 Display = DisplayClass()
 
-API_URL = "http://localhost:8000/hashes" #fill this in later!!! It's a base URL.
-# Basically, the FastAPI server will now need to process different requests based on the HTTP method, not just name of the endpoint.
 password = os.getenv("ServerPassword")
 
 """Pull every award out of the SCVMUN API.
@@ -17,7 +16,6 @@ Needs `requests`; everything else is the standard library.
 """
 
 import json
-
 import requests
 
 BASE_URL = "https://scvmun.esuhsd.org" # deployment root, no trailing slash
@@ -80,341 +78,279 @@ def get_awards(base_url=BASE_URL, timeout=TIMEOUT):
     # 3. Format: {committees: [{committee, awards: [{country, award}]}]}
     return json.loads(response.text)["committees"]
 
-def add_new_school_or_delegates_to_existing_school_and_request_hashes(Delegates: SchoolDelegates) -> dict[str, str] | None:
-    """
-    Sends finalassignments data to the FastAPI endpoint and returns a dictionary
-    mapping school identifiers to generated user hashes.
+SCHOOLS_PATH = "/api/admin/schools"
+HASHES_PATH = "/api/admin/hashes"
+COMMITTEES_PATH = "/api/admin/committees"
 
-    Matching FastAPI function should: 
-    1. accept bearer header token.
-    2. accept a JSON payload with the finalassignments dictionary. Read into the string of that dictionary to see if the school name is already in database, to discern if adding new delegate or adding another school.
-    3. return a dictionary, where there is a key value pair with key being "data", and value being a dictionary with the hashes {"school - #1": "hash12345", ...}
-    4. return appropriate HTTP status codes for errors (401, 403, 422, 500, etc.)
-    5. return an optional message with things like "school already in database", or "new school".
-    """
-    # 1. Prepare headers
-    headers = {
-        "Authorization": f"Bearer {password}",
-        "Content-Type": "application/json"
+def _admin_headers(token):
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
     }
-    
+
+def _post_admin(path, payload, token, base_url=BASE_URL, timeout=TIMEOUT):
+    """POST a JSON payload to an admin route and return the decoded response."""
+    response = requests.post(
+        f"{base_url.rstrip('/')}{path}",
+        json=payload,
+        headers=_admin_headers(token),
+        timeout=timeout,
+    )
+    if response.status_code not in (200, 201):
+        raise RuntimeError(f"POST {path} failed ({response.status_code}): {_error_text(response)}")
+    return response.json()
+
+def _school_request_payload(SchoolInfo) -> dict:
+    """Build the POST /api/admin/schools payload from the registration data."""
+    fields = {
+        "school_name": getattr(SchoolInfo, "schoolname", None),
+        "school_address": getattr(SchoolInfo, "school_address", None),
+        "city": getattr(SchoolInfo, "city", None),
+        "state": getattr(SchoolInfo, "state", None),
+        "zip_code": getattr(SchoolInfo, "zip_code", None),
+        "advisor_name": getattr(SchoolInfo, "advisor_name", None),
+        "advisor_phone": getattr(SchoolInfo, "advisor_phone", None),
+        "advisor_email": getattr(SchoolInfo, "advisor_email", None),
+        "head_delegate_name": getattr(SchoolInfo, "head_del_name", None),
+        "head_delegate_email": getattr(SchoolInfo, "head_del_email", None),
+        "head_delegate_phone": getattr(SchoolInfo, "head_del_phone", None),
+    }
+    missing = [name for name, value in fields.items() if value is None or str(value).strip() == ""]
+    if missing:
+        raise RuntimeError("Missing required school field(s): " + ", ".join(missing))
+
+    payload = {name: str(value).strip() for name, value in fields.items()}
+    payload["payment_status"] = getattr(SchoolInfo, "payment_status", None) or "unpaid"
+    payload["invoiceURL"] = getattr(SchoolInfo, "invoice_url", None)
+    return payload
+
+def _final_assignments_payload(Delegates: SchoolDelegates) -> dict[str, list[str]]:
+    """The server wants {display_label: [committee, country]}."""
+    return {
+        str(number): [Delegates.committee[number], Delegates.country[number]]
+        for number in Delegates.number
+    }
+
+def _hashes_to_dict(payload):
+    """Normalize a HashListResponse to {delegate_label: hash}, or return the raw payload."""
+    if not isinstance(payload, dict):
+        return payload
+
+    entries = payload.get("hashes")
+    if entries is None:
+        return payload.get("data", payload)  # legacy shape
+    if not isinstance(entries, list):
+        return entries
+
+    label_keys = ("delegate", "delegate_number", "name", "label", "key", "id", "account_id", "index")
+    value_keys = ("hash", "access_code", "value")
+    result = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        label = next((entry[key] for key in label_keys if entry.get(key) is not None), None)
+        value = next((entry[key] for key in value_keys if entry.get(key) is not None), None)
+        if label is not None and value is not None:
+            result[str(label)] = value
+    return result if result else entries
+
+def create_school(SchoolInfo, token, base_url=BASE_URL, timeout=TIMEOUT) -> dict:
+    """POST /api/admin/schools and return the SchoolEntry (includes advisor_hash)."""
+    return _post_admin(SCHOOLS_PATH, _school_request_payload(SchoolInfo), token, base_url, timeout)
+
+def create_delegate_hashes(SchoolInfo, Delegates: SchoolDelegates, token, base_url=BASE_URL, timeout=TIMEOUT) -> dict:
+    """POST /api/admin/hashes for the delegates of an existing school."""
+    payload = {
+        "school_name": getattr(SchoolInfo, "schoolname", None),
+        "finalAssignments": _final_assignments_payload(Delegates),
+    }
+    return _post_admin(HASHES_PATH, payload, token, base_url, timeout)
+
+def create_school_and_request_hashes(SchoolInfo, Delegates: SchoolDelegates, base_url=BASE_URL, timeout=TIMEOUT):
+    """
+    Log in, create the school + advisor account, then mint hashes for its delegates.
+
+    Returns {delegate_label: hash} on success, or None if the server call failed.
+    """
     try:
-        finalassignments = {}
-        for number, (committee, country) in zip(Delegates.number, zip(Delegates.committee, Delegates.country)):
-            finalassignments[number] = {"committee": committee,"country": country}
-            # Send POST request with a timeout (e.g., 5 seconds)
-            response = requests.post(
-                API_URL, 
-                json=finalassignments, 
-                headers=headers,
-                timeout=5
+        token = login_as_admin(ADMIN_CODE, ADMIN_PASSWORD, TURNSTILE_TOKEN, timeout, base_url)
+
+        SchoolInfo.payment_status = (
+            Display.typing_with_pre_fill("Payment status:", "partially paid") or ""
+        ).strip() or "partially paid"
+        SchoolInfo.invoice_url = (
+            Display.typing_with_pre_fill("Invoice URL (optional):", "") or ""
+        ).strip() or None
+
+        school = create_school(SchoolInfo, token, base_url, timeout)
+
+        advisor_hash = school.get("advisor_hash")
+        if advisor_hash:
+            Display.display(f"School created. Advisor hash: {advisor_hash}")
+        else:
+            Display.display(
+                f"School created (id={school.get('id')}, name={school.get('name')}). "
+                "No advisor hash returned."
             )
-            
-            # Check specific HTTP status codes returned by the server
-            if response.status_code == 401 or response.status_code == 403:
-                Display.display("Error: Wrong password or unauthorized access.")
-                return {}
-                
-            elif response.status_code == 422 or response.status_code == 400:
-                Display.display("Error: Data error. The sent assignments dictionary formatted incorrectly.")
-                return {}
-                
-            elif response.status_code >= 500:
-                Display.display("Error: Internal server error on the FastAPI server.")
-                return {}
 
-            # Fallback to catch any other non-200 HTTP status code
-            response.raise_for_status()
-            
-            # Parse successful JSON payload
-            payload = response.json()
-            hashes: dict[str, str] = payload.get("data", {})
-            server_message = payload.get("message", "")
-            if server_message:
-                Display.display(f"Message from server: {server_message}")
-            return hashes
-
-    # Network-level exceptions (Server unreachable or timed out)
+        hashes_payload = create_delegate_hashes(SchoolInfo, Delegates, token, base_url, timeout)
+        return _hashes_to_dict(hashes_payload)
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-        Display.display("Error: No server response. Check if FastAPI is running and accessible.")
-        return {}
-        
-    # Generic catch-all for any other unexpected requests issues
+        Display.display("Error: No server response. Check that the server is running and reachable.")
+        return None
     except requests.exceptions.RequestException as e:
         Display.display(f"Error communicating with server: {e}")
-        return {}
+        return None
+    except RuntimeError as e:
+        Display.display(f"Server error: {e}")
+        return None
 
-def drop_delegates_from_school_and_delete_hashes(delegates_to_drop: list[str]) -> dict[str, str]:
+def request_hashes_for_new_delegates(SchoolInfo, Delegates: SchoolDelegates, base_url=BASE_URL, timeout=TIMEOUT):
     """
-    Sends delegates_to_drop to FastAPI to remove delegates and return their deleted hashes.
-    Prints any descriptive messages sent back by the server.
+    Log in and mint hashes for delegates added to an existing school.
 
-    Matching FastAPI function should: 
-    1. accept bearer header token.
-    2. accept a JSON payload with the delegates_to_drop list. Check if that delegate exists in the database, and if so, delete them and their hashes. Do not delete at all if even a single delegate doesn't exist.
-    3. return a dictionary, where there is a key value pair with key being "data", and value being a dictionary with the hashes deleted {"school - #1": "hash12345", ...}
-    4. return appropriate HTTP status codes (200, 401, 403, 400, 422, 500, etc.)
-    5. return an optional message with things like "delegate does not exist".
+    Returns {delegate_label: hash} on success, or None if the server call failed.
     """
-    headers = {
-        "Authorization": f"Bearer {password}",
-        "Content-Type": "application/json"
-    }
-    
     try:
-        # Send DELETE request with delegates payload
+        token = login_as_admin(ADMIN_CODE, ADMIN_PASSWORD, TURNSTILE_TOKEN, timeout, base_url)
+        hashes_payload = create_delegate_hashes(SchoolInfo, Delegates, token, base_url, timeout)
+        return _hashes_to_dict(hashes_payload)
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        Display.display("Error: No server response. Check that the server is running and reachable.")
+        return None
+    except requests.exceptions.RequestException as e:
+        Display.display(f"Error communicating with server: {e}")
+        return None
+    except RuntimeError as e:
+        Display.display(f"Server error: {e}")
+        return None
+
+def delete_committee_delegate(committee_name, account_id, country, token=None, base_url=BASE_URL, timeout=TIMEOUT):
+    """
+    Remove one committee delegate. If `token` is not given, log in first.
+
+    Calls DELETE /api/admin/committees/{committee_name}/delegates/{account_id}
+    with confirm set to the delegate's current country. Returns the
+    DelegateRemovedResponse dict, or None on failure.
+    """
+    if token is None:
+        try:
+            token = login_as_admin(ADMIN_CODE, ADMIN_PASSWORD, TURNSTILE_TOKEN, timeout, base_url)
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            Display.display("Error: No server response. Check that the server is running and reachable.")
+            return None
+        except requests.exceptions.RequestException as e:
+            Display.display(f"Error communicating with server: {e}")
+            return None
+        except RuntimeError as e:
+            Display.display(f"Server error: {e}")
+            return None
+
+    try:
+        account_id = int(account_id)
+    except (TypeError, ValueError):
+        Display.display(f"Invalid account ID for {committee_name}/{country}: {account_id!r}")
+        return None
+
+    try:
         response = requests.delete(
-            API_URL, 
-            json=delegates_to_drop, 
-            headers=headers,
-            timeout=5
+            f"{base_url.rstrip('/')}{COMMITTEES_PATH}/{quote(committee_name, safe='')}/delegates/{account_id}",
+            params={"confirm": country},
+            headers=_admin_headers(token),
+            timeout=timeout,
         )
-        
-        # Check specific HTTP status codes
-        if response.status_code in (401, 403):
-            Display.display("Error: Wrong password or unauthorized access.")
-            return {}
-            
-        elif response.status_code in (400, 422):
-            Display.display("Error: Data error. The delegates dictionary is formatted incorrectly.")
-            return {}
-            
-        elif response.status_code >= 500:
-            Display.display("Error: Internal server error on the FastAPI server.")
-            return {}
-
-        response.raise_for_status()
-        
-        # Parse response JSON
-        payload = response.json()
-        
-        # Print server message if provided
-        if "message" in payload and payload["message"]:
-            Display.display(f"Server Message: {payload['message']}")
-            
-        # Extract and return deleted hashes mapping
-        deleted_hashes: dict[str, str] = payload.get("data", {})
-        return deleted_hashes
-
+        if response.status_code != 200:
+            Display.display(f"Could not delete delegate ({response.status_code}): {_error_text(response)}")
+            return None
+        return response.json()
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-        Display.display("Error: No server response. Check if FastAPI is running and accessible.")
-        return {}
-        
+        Display.display("Error: No server response. Check that the server is running and reachable.")
+        return None
     except requests.exceptions.RequestException as e:
         Display.display(f"Error communicating with server: {e}")
-        return {}
+        return None
+def _parse_assignment(assignment):
+    """'France (DISEC)' -> ('France', 'DISEC')."""
+    if "(" not in assignment or not assignment.rstrip().endswith(")"):
+        raise ValueError(f"Expected 'Country (Committee)', got {assignment!r}")
+    country, committee = assignment.rsplit(" (", 1)
+    return country.strip(), committee[:-1].strip()
 
-def request_hashes_for_school(school_name: str) -> dict[str, str]:
-    """
-    Fetches the hashes mapping for a specific school from the FastAPI server.
+def get_committee_detail(committee_name, token=None, base_url=BASE_URL, timeout=TIMEOUT) -> dict:
+    """GET /api/admin/committees/{committee_name}; returns CommitteeDetailResponse."""
+    if token is None:
+        token = login_as_admin(ADMIN_CODE, ADMIN_PASSWORD, TURNSTILE_TOKEN, timeout, base_url)
+    response = requests.get(
+        f"{base_url.rstrip('/')}{COMMITTEES_PATH}/{quote(committee_name, safe='')}",
+        headers=_admin_headers(token),
+        timeout=timeout,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"GET /api/admin/committees/{committee_name} failed ({response.status_code}): {_error_text(response)}"
+        )
+    return response.json()
 
-    Matching FastAPI function should: 
-    1. accept bearer header token.
-    2. accept a query parameter with the school name
-    3. return a dictionary, where there is a key value pair with key being "data", and value being a dictionary with the hashes {"school - #1": "hash12345", ...}
-    4. return appropriate HTTP status codes (200, 401, 403, 400, 422, 500, etc.)
-    5. return an optional message with things like "School not found".
+def drop_delegates_for_school(school_name, delegates_to_drop, base_url=BASE_URL, timeout=TIMEOUT):
     """
-    headers = {
-        "Authorization": f"Bearer {password}",
-        "Content-Type": "application/json"
-    }
-    
-    # Query parameter sent in the URL string
-    params = {
-        "school_name": school_name
-    }
-    
+    Resolve each 'Country (Committee)' assignment to a server delegate and delete it.
+
+    All committee lookups and delegate matches are resolved before the first DELETE,
+    so a bad assignment cannot delete half the list. Returns the list of
+    DelegateRemovedResponse dicts, or None if anything could not be resolved/deleted.
+    """
     try:
-        # Sends GET request to API_URL
-        response = requests.get(
-            API_URL, 
-            params=params, 
-            headers=headers,
-            timeout=5
-        )
-        
-        # Specific HTTP status code handling
-        if response.status_code in (401, 403):
-            Display.display("Error: Wrong password or unauthorized access.")
-            return {}
-            
-        elif response.status_code in (400, 422):
-            Display.display(f"Error: Invalid query parameter or school name '{school_name}'.")
-            return {}
-            
-        elif response.status_code == 404:
-            Display.display(f"Error: School '{school_name}' was not found.")
-            return {}
-            
-        elif response.status_code >= 500:
-            Display.display("Error: Internal server error on the FastAPI server.")
-            return {}
-
-        response.raise_for_status()
-        
-        payload = response.json()
-        
-        # Print optional message from the server if present
-        if "message" in payload and payload["message"]:
-            Display.display(f"Server Message: {payload['message']}")
-            
-        hashes: dict[str, str] = payload.get("data", {})
-        return hashes
-
+        token = login_as_admin(ADMIN_CODE, ADMIN_PASSWORD, TURNSTILE_TOKEN, timeout, base_url)
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-        Display.display("Error: No server response. Check if FastAPI is running and accessible.")
-        return {}
-        
+        Display.display("Error: No server response. Check that the server is running and reachable.")
+        return None
     except requests.exceptions.RequestException as e:
         Display.display(f"Error communicating with server: {e}")
-        return {}
-    
+        return None
+    except RuntimeError as e:
+        Display.display(f"Server error: {e}")
+        return None
 
+    committee_cache = {}
+    used_account_ids = set()
+    resolved = []
 
-def regenerate_hashes_for_delegate(committee: str, country: str) -> str:
-    """
-    Triggers a hash regeneration on the server for a specific delegate 
-    and returns the new hash string.
+    for assignment in delegates_to_drop:
+        try:
+            country, committee = _parse_assignment(assignment)
+        except ValueError as e:
+            Display.display(str(e))
+            return None
 
-    Matching FastAPI function should: 
-    1. accept bearer header token.
-    2. Be located on the /hashes/regenerate/delegate endpoint.
-    3. Expect country and committee as query parameters.
-    4. return appropriate HTTP status codes (200, 401, 403, 400, 422, 500, etc.)
-    5. return an optional message with things like "Delegate does not exist".
-    6. Return a JSON payload with a single key "data" and value being the new hash string.
-    """
+        if committee not in committee_cache:
+            try:
+                committee_cache[committee] = get_committee_detail(committee, token, base_url, timeout)
+            except (RuntimeError, requests.exceptions.RequestException) as e:
+                Display.display(f"Could not load committee '{committee}': {e}")
+                return None
 
-    API_URL = "http://127.0.0.1:8000/hashes/regenerate/delegate"
-    headers = {
-        "Authorization": f"Bearer {password}",
-        "Content-Type": "application/json"
-    }
-    
-    # Send committee and country as query params
-    params = {
-        "committee": committee,
-        "country": country
-    }
-    
-    try:
-        # POST request (without a JSON body, using params instead)
-        response = requests.post(
-            API_URL, 
-            params=params, 
-            headers=headers,
-            timeout=5
+        entries = committee_cache[committee].get("delegates") or []
+        match = next(
+            (
+                entry for entry in entries
+                if entry.get("account_id") is not None
+                and entry["account_id"] not in used_account_ids
+                and str(entry.get("school_name", "")).strip().lower() == school_name.strip().lower()
+                and str(entry.get("country", "")).strip().lower() == country.strip().lower()
+            ),
+            None,
         )
-        
-        if response.status_code in (401, 403):
-            Display.display("Error: Wrong password or unauthorized access.")
-            return ""
-            
-        elif response.status_code == 404:
-            Display.display(f"Error: Delegate ({country}, {committee}) not found.")
-            return ""
-            
-        elif response.status_code >= 500:
-            Display.display("Error: Internal server error on the FastAPI server.")
-            return ""
+        if match is None:
+            Display.display(f"No server delegate found for '{assignment}' at '{school_name}'.")
+            return None
 
-        response.raise_for_status()
-        
-        payload = response.json()
-        
-        if "message" in payload and payload["message"]:
-            Display.display(f"Server Message: {payload['message']}")
-            
-        # Extract the single new hash string from the payload
-        # Expecting server JSON: {"data": "new_generated_hash_123"}
-        new_hash: str = payload.get("data", "")
-        return new_hash
+        used_account_ids.add(match["account_id"])
+        resolved.append((committee, country, match["account_id"]))
 
-    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-        Display.display("Error: No server response. Check if FastAPI is running and accessible.")
-        return ""
-        
-    except requests.exceptions.RequestException as e:
-        Display.display(f"Error communicating with server: {e}")
-        return ""
-
-def regenerate_hashes_for_school(school_name: str) -> dict[str, str]:
-    """
-    Triggers a bulk hash regeneration for an entire school 
-    and returns a dictionary mapping delegate keys to their new hashes.
-
-    Matching FastAPI function should: 
-    1. accept bearer header token.
-    2. Be located on the /hashes/regenerate/school endpoint.
-    3. Expect school name as a query parameter.
-    4. return appropriate HTTP status codes (200, 401, 403, 400, 422, 500, etc.)
-    5. return an optional message with things like "School does not exist" or "Hash regeneration error".
-    6. Return a JSON payload with a single key "data" and value being a dictionary of new hashes for all delegates in that school.
-    """
-
-    API_URL = "http://127.0.0.1:8000/hashes/regenerate/school"
-    headers = {
-        "Authorization": f"Bearer {password}",
-        "Content-Type": "application/json"
-    }
-    
-    # Send school_name as a query parameter
-    params = {
-        "school_name": school_name
-    }
-    
-    try:
-        # POST request to trigger the bulk regeneration
-        response = requests.post(
-            API_URL, 
-            params=params, 
-            headers=headers,
-            timeout=5
-        )
-        
-        # Handle specific HTTP status codes
-        if response.status_code in (401, 403):
-            Display.display("Error: Wrong password or unauthorized access.")
-            return {}
-            
-        elif response.status_code == 404:
-            Display.display(f"Error: School '{school_name}' was not found.")
-            return {}
-            
-        elif response.status_code in (400, 422):
-            Display.display(f"Error: Invalid parameters for school name '{school_name}'.")
-            return {}
-            
-        elif response.status_code >= 500:
-            Display.display("Error: Internal server error on the FastAPI server.")
-            return {}
-
-        response.raise_for_status()
-        
-        payload = response.json()
-        
-        # Print optional server message if present
-        if "message" in payload and payload["message"]:
-            Display.display(f"Server Message: {payload['message']}")
-            
-        # Parse updated hashes dictionary from response payload
-        new_hashes: dict[str, str] = payload.get("data", {})
-        return new_hashes
-
-    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-        Display.display("Error: No server response. Check if FastAPI is running and accessible.")
-        return {}
-        
-    except requests.exceptions.RequestException as e:
-        Display.display(f"Error communicating with server: {e}")
-        return {}
-    
-def export_database_to_csv() -> None:
-    pass
-
-def view_business_log() -> None:
-    pass
-
-def view_tech_log() -> None:
-    pass
+    removed = []
+    for committee, country, account_id in resolved:
+        result = delete_committee_delegate(committee, account_id, country, token, base_url, timeout)
+        if result is None:
+            return None
+        removed.append(result)
+    return removed

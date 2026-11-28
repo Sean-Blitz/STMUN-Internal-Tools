@@ -91,7 +91,7 @@ def assign_new_schools():
         
         time.sleep(5); Display.display("Checking sheet for changes...") #pause for sheet to register changes.
         percentagesChecking = SheetsAPI.read_percentages_from_overview(ConferenceInfo)
-        hashes = ServerRequests.add_new_school_or_delegates_to_existing_school_and_request_hashes(Delegates)
+        hashes = ServerRequests.create_school_and_request_hashes(SchoolInfo, Delegates)
         if AssignmentsFunctions.percentages_match(ConferenceInfo, percentagesChecking) and hashes != None:
             Display.display("Percentages are correct.")
         else:
@@ -188,14 +188,14 @@ def add_delegates():
     percentagesChecking = SheetsAPI.read_percentages_from_overview(ConferenceInfo)
     if AssignmentsFunctions.percentages_match(ConferenceInfo, percentagesChecking):
         Display.display("Percentages are correct. Moving on to next school.")
-        hashes = ServerRequests.add_new_school_or_delegates_to_existing_school_and_request_hashes(Delegates)
+        hashes = ServerRequests.request_hashes_for_new_delegates(SchoolInfo, Delegates)
         Display.display(hashes)
     else:
         Display.display("Percentage error. Please check the sheet! School name placed in completed CSV.")
         Display.display(registrationSheetURL)
         cont = Display.take_text_input("Should we proceed to send new assignments to the database? (yes/no)")
         if cont == "yes":
-            hashes = ServerRequests.add_new_school_or_delegates_to_existing_school_and_request_hashes(Delegates)
+            hashes = ServerRequests.request_hashes_for_new_delegates(SchoolInfo, Delegates)
             Display.display(hashes)
             cont = Display.take_text_input("Proceed to add these delegates to the roster and sync with Airtable? (yes/no)")
             while cont not in ["yes", "no"]:
@@ -220,13 +220,13 @@ def drop_delegates():
     # Finally, insert them back into the original pool by reading their committee name, and slotting them back to the first empty cell. Request that these assignments be deleted from the database.
     selectedSchool = Display.take_text_input("Please input the school to drop delegates from.")
     CurrentSchools = SheetsAPI.get_list_of_current_schools_names()
-    ConferenceInfo = ConferenceInformation()
-
-    SheetsAPI.get_available_countries_and_backup_storage(ConferenceInfo, selectedSchool, already_assigned_school=True)
     while selectedSchool not in CurrentSchools: #closest match logic for input errors.
         ClosestMatch = get_close_matches(selectedSchool, CurrentSchools, n=1, cutoff=0.6)
         Display.display(f"Display.take_text_input error. Did you mean: {ClosestMatch}?")
         selectedSchool = Display.take_text_input("Please input the school to drop delegates from.")
+    ConferenceInfo = ConferenceInformation()
+
+    SheetsAPI.get_available_countries_and_backup_storage(ConferenceInfo, selectedSchool, already_assigned_school=True)
 
     list_of_assignments = SheetsAPI.get_existing_assignments_as_list(selectedSchool)
 
@@ -252,30 +252,32 @@ def drop_delegates():
             final_list_of_assignments.remove(assignment)
         Display.display(f"Final list of assignments: {final_list_of_assignments}")
 
-        cont = Display.take_text_input("Proceed with dropping the delegates and updating the sheet? (y/n)")
-        if cont == "n":
+        cont = Display.take_text_input("Proceed with dropping the delegates and updating the sheet? (y/n)").strip().lower()
+        if cont != "y":
             Display.display("Aborting drop operation.")
             sys.exit()
 
-        SheetsAPI.clear_assignments_currently_in_storage_for_school(selectedSchool)
-        
-        assigned_cell_map, remaining_cell_map = SheetsAPI.prepare_list_of_assignments_for_push(final_list_of_assignments, delegates_to_drop, selectedSchool)
+        # Delete from the server first: if a delegate cannot be resolved/deleted, the sheet
+        # is still untouched.
+        removed = ServerRequests.drop_delegates_for_school(selectedSchool, delegates_to_drop)
+        if removed is None:
+            Display.display("No delegates were deleted on the server. The sheet was not changed.")
+            sys.exit()
 
+        SheetsAPI.clear_assignments_currently_in_storage_for_school(selectedSchool)
+        assigned_cell_map, remaining_cell_map = SheetsAPI.prepare_list_of_assignments_for_push(final_list_of_assignments, delegates_to_drop, selectedSchool)
         SheetsAPI.push_values(assigned_cell_map)
         SheetsAPI.push_values(remaining_cell_map)
-        #push back the new assignments to the sheet, and return the dropped delegates to the original pool.
+        # push back the new assignments to the sheet and return the dropped delegates to the pool.
 
-        deleted_hashes = ServerRequests.drop_delegates_from_school_and_delete_hashes(delegates_to_drop)
-        if deleted_hashes != {}:
-            for delegate, hash_value in deleted_hashes.items():
-                Display.display(f"Deleted {delegate} with hash: {hash_value}")
-            school_roster_ID = RosterConnector.find_existing_school_roster_ID(selectedSchool)
-            Display.display(f"Go into the roster and delete the delegates manually: https://docs.google.com/spreadsheets/d/{school_roster_ID}/edit")
-            Display.display("Also, go into Airtable and make sure changes are done.")
-        else:
-            Display.display("No delegates were deleted. Please check the server response for errors.")
-            SheetsAPI.push_values(ConferenceInfo.backup)
-            sys.exit()
+        for result in removed:
+            Display.display(
+                f"Removed {result.get('delegate')} from {result.get('committee')} ({result.get('school')}); "
+                f"files deleted: {result.get('files_deleted')}, failed: {result.get('files_failed')}."
+            )
+        school_roster_ID = RosterConnector.find_existing_school_roster_ID(selectedSchool)
+        Display.display(f"Go into the roster and delete the delegates manually: https://docs.google.com/spreadsheets/d/{school_roster_ID}/edit")
+        Display.display("Also, go into Airtable and make sure changes are done.")
         
     else:
         Display.display("The sheet for the school's assignments came back empty. Check the Assignments sheet.")

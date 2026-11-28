@@ -235,7 +235,17 @@ class Assignments_to_Sheets:
         countryprefs = [country1, country2, country3, country4, country5]
         SecurityCouncil = interpret_yes_no(SecurityCouncil)  # sheet stores yes/no text, a checkbox, or blank
         advisorEmail, HeadDelegateEmail = SheetsAPI.read_cells(registration_sheet_ID, [f"Responses!K{row}", f"Responses!O{row}"])
-        schoolInfo.add_school(advisorEmail, HeadDelegateEmail, selectedSchool, countryprefs, RegionBloc, SecurityCouncil,int(numdels))
+        school_address, city, state, zip_code, school_phone, advisor_name, advisor_phone, head_del_name, head_del_phone = SheetsAPI.read_cells(
+            registration_sheet_ID,
+            [f"Responses!D{row}", f"Responses!E{row}", f"Responses!F{row}", f"Responses!G{row}", f"Responses!H{row}",
+             f"Responses!I{row}", f"Responses!J{row}", f"Responses!M{row}", f"Responses!N{row}"],
+        )
+        schoolInfo.add_school(
+            advisorEmail, HeadDelegateEmail, selectedSchool, countryprefs, RegionBloc, SecurityCouncil, int(numdels),
+            school_address=school_address, city=city, state=state, zip_code=zip_code, school_phone=school_phone,
+            advisor_name=advisor_name, advisor_phone=advisor_phone,
+            head_del_name=head_del_name, head_del_phone=head_del_phone,
+        )
 
     def map_cells(self, Delegates: SchoolDelegates, ConferenceInfo: ConferenceInformation):
         availableCountries = self.available_countries_and_coordinates
