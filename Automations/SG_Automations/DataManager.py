@@ -45,19 +45,34 @@ class SchoolDelegates:
 class SchoolInformation:
     def __init__(self):
         self.advisor: str
+        self.advisor_name: str
         self.advisor_email: str
+        self.advisor_phone: str
+        self.head_del_name: str
         self.head_del_email: str
+        self.head_del_phone: str
         self.schoolname: str
+        self.school_address: str
+        self.city: str
+        self.state: str
+        self.zip_code: str
+        self.school_phone: str
         self.country_preferences: list[str]
         self.region_bloc: str
         self.security_council_preference: bool
         self.numdels: int
+        self.payment_status: str = "unpaid"
+        self.invoice_url: str | None = None
         GA_count: int
         Spec_count: int
         Crisis_count: int
 
-    def add_school(self, advisor_email, head_del_email, schoolname, 
-                   country_preferences, region_bloc, security_council_preference, numdels):
+    def add_school(self, advisor_email, head_del_email, schoolname,
+                   country_preferences, region_bloc, security_council_preference, numdels,
+                   school_address=None, city=None, state=None, zip_code=None, school_phone=None,
+                   advisor_name=None, advisor_phone=None,
+                   head_del_name=None, head_del_phone=None,
+                   payment_status="unpaid", invoice_url=None):
         self.advisor_email = advisor_email
         self.head_del_email = head_del_email
         self.schoolname = schoolname
@@ -65,6 +80,17 @@ class SchoolInformation:
         self.region_bloc = region_bloc
         self.security_council_preference = security_council_preference
         self.numdels = numdels
+        self.school_address = school_address
+        self.city = city
+        self.state = state
+        self.zip_code = zip_code
+        self.school_phone = school_phone
+        self.advisor_name = advisor_name
+        self.advisor_phone = advisor_phone
+        self.head_del_name = head_del_name
+        self.head_del_phone = head_del_phone
+        self.payment_status = payment_status
+        self.invoice_url = invoice_url
 
     def set_assignment_counts(self, GA_count, Spec_count, Crisis_count):
         self.GA_count = GA_count

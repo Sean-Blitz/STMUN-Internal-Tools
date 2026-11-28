@@ -16,7 +16,10 @@ class SlideAPI(GoogleAPIs):
         else:
             raise ValueError("SCOPES must be a list of scopes or None.")
         creds = self.authenticate()
-        self.presentations = build('slides', 'v1', credentials=creds)
+        self.service = build('slides', 'v1', credentials=creds)
+        # Every method calls self.presentations(), so expose the bound service method
+        # rather than the service resource itself.
+        self.presentations = self.service.presentations
 
     @retry_on_http_error()
     def duplicate_slide(self, presentation_id, slide_object_id):

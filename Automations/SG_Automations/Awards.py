@@ -39,14 +39,16 @@ def _as_bool(value) -> bool:
 def _normalize(name: str) -> str:
     return name.strip().lower()
 
-def generate_all_awards_by_committee():
+def generate_all_awards_by_committee(committees_with_awards = None):
     """
     Fetches all award data from the SCVMUN API, duplicates the award slide for every
     award (twice for double-delegation committees), and fills each slide's
     COMMITTEE_NAME / AWARD_NAME / COUNTRY_NAME placeholders.
     """
     _require_awards_env()
-    committees_with_awards = ServerRequests.get_awards()
+    if committees_with_awards is None:
+        # Format: [{"committee": "Committee Name", "awards": [{"country": "Country Name", "award": "Award Name"}, ...]}, ...]
+        committees_with_awards = ServerRequests.get_awards()
     names: list[str] = SheetsAPI.get_column_data_until_empty(REGISTRATION_SHEET_ID, "Overview", "A", 2)
     status_booleans = SheetsAPI.read_cells(REGISTRATION_SHEET_ID, [f"Overview!E{i+2}" for i in range(len(names))])
     committee_double_status: dict[str, bool] = {
