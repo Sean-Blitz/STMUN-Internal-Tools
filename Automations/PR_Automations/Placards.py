@@ -52,8 +52,6 @@ PLACARDS_PER_SLIDE = 2
 
 SORT_COUNTRIES_WITHIN_COMMITTEE = True   # alphabetical
 
-EXCLUDE_COMMITTEES = []              # e.g. ["ICJ"] to skip committees entirely
-
 REQUEST_BATCH_SIZE = 100             # keeps each Slides API call a reasonable size
 
 # Google Permissions the script needs (same as badges -> same token.json works)
